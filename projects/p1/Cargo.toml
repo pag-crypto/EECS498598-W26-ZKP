@@ -1,0 +1,19 @@
+[package]
+name = "p1"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.91.1"
+
+
+[dependencies]
+sfs-bigint = {git = "https://github.com/cmlsharp/sfs-bigint"}
+itertools = "0.14.0"
+num-traits = "0.2.19"
+rand = "0.9.2"
+serde = { version = "1.0.219", features = ["derive"] }
+sha3 = "0.10.8"
+
+[dev-dependencies]
+proptest = { version = "1.9.0", features = ["attr-macro"] }
+
+
