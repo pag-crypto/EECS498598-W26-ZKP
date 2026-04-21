@@ -32,6 +32,20 @@
 % Lecture-specific macros
 \tcbuselibrary{skins, breakable}
 
+\newtcolorbox{highlight}[1][]{
+  colback=blue!5!white,
+  colframe=blue!60!black,
+  fonttitle=\bfseries,
+  #1
+}
+
+\newtcolorbox{graybox}[1][]{
+  colback=gray!8,
+  colframe=gray!50,
+  fonttitle=\bfseries,
+  #1
+}
+
 \begin{document}
 
 %-----------------------------------------------------------------------
@@ -43,8 +57,7 @@
   {\large \textbf{Lecture 16: CPU-Model Frontends I}}\\[4pt]
   {\large Instructor: Paul Grubbs \quad
     \href{mailto:paulgrub@umich.edu}{\texttt{paulgrub@umich.edu}} \quad
-    Beyster 4709}\\[2pt]
-  {\normalsize March 23, 2026}
+    Beyster 4709}
 \end{center}
 
 \vspace{0.5em}
@@ -120,15 +133,14 @@ This viewpoint is also closer to the way real programs are developed. Languages 
 
 \subsection{Performance Questions}
 
-\begin{tcolorbox}[title={CPU-Model Frontend Cost Drivers},
-                   colback=blue!5, colframe=blue!40!black]
+\begin{highlight}[title={CPU-Model Frontend Cost Drivers}]
 \textbf{A CPU-model frontend is governed by three high-level cost drivers.}
 \begin{enumerate}[leftmargin=2em, topsep=2pt, itemsep=0pt]
   \item The executed machine-step count $t$.
   \item The memory footprint together with the total number of memory accesses.
   \item The cost of embedding one instruction of the chosen $\algo{ISA}$ into $\algo{R1CS}$.
 \end{enumerate}
-\end{tcolorbox}
+\end{highlight}
 
 Fix a program $P$, an input $X$, and an instruction set architecture $\algo{ISA}$ that specifies both the allowed instructions and the semantics of memory. Compile $P$ into a program $P'$ for $\algo{ISA}$. This compiled representation may be viewed as bytecode or assembly, meaning an opcode sequence together with its memory behavior.
 
@@ -210,7 +222,7 @@ Take the memory-access entries from the transcript and sort them first by addres
 Fix an address $a$. After sorting, every access to $a$ appears in one contiguous block, and within that block the accesses are arranged in chronological order. For any read of $a$, the immediately preceding entry in that block is exactly the most recent earlier access to $a$. That entry determines the current contents of address $a$. Therefore the read is correct exactly when its value matches the value stored in the preceding entry. Since different addresses occupy disjoint blocks, repeating this check across all adjacent pairs proves global memory consistency.
 \end{proof}
 
-\begin{tcolorbox}[colback=gray!8, colframe=gray!50]
+\begin{graybox}
 \textbf{\underline{One address block after sorting:}}\\
 For a fixed address $a$, the sorted access list may contain
 \[
@@ -224,19 +236,6 @@ The local rule is:
   \item each $\algo{read}$ is checked against the value in the immediately preceding entry in the block;
   \item if the block begins with a $\algo{read}$, that value is checked against the agreed public initial memory state.
 \end{itemize}
-\end{tcolorbox}
-
-\bigskip
-\hrule
-\bigskip
-
-\begin{thebibliography}{9}
-
-\bibitem{Merkle87}
-  R.~C. Merkle,
-  ``A digital signature based on a conventional encryption function,''
-  \emph{CRYPTO}, 1987.
-
-\end{thebibliography}
+\end{graybox}
 
 \end{document}

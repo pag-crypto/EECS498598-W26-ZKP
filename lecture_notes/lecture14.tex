@@ -1,0 +1,272 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in, headheight=14pt]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{fancyhdr}
+\usepackage{tcolorbox}
+\usepackage{microtype}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{arrows.meta, positioning, calc, shapes.geometric}
+
+\input{notation.tex}
+\input{zk-notation.tex}
+\input{environments.tex}
+\input{lecture-macros.tex}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{EECS 498/CSE 598: Zero-Knowledge Proofs}
+\rhead{Winter 2026}
+\lfoot{Lecture 14: Frontends, Transcripts, and ASIC-Model Frontends}
+\rfoot{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+
+% Lecture-specific macros
+\tcbuselibrary{skins, breakable}
+
+\newtcolorbox{highlight}[1][]{
+  colback=blue!5!white,
+  colframe=blue!60!black,
+  fonttitle=\bfseries,
+  #1
+}
+
+\begin{document}
+
+%-----------------------------------------------------------------------
+% Title Block
+%-----------------------------------------------------------------------
+\begin{center}
+  {\LARGE \textbf{EECS 498 / CSE 598: Zero-Knowledge Proofs}}\\[6pt]
+  {\large Winter 2026}\\[4pt]
+  {\large \textbf{Lecture 14: Frontends, Transcripts, and ASIC-Model Frontends}}\\[4pt]
+  {\large Instructor: Paul Grubbs \quad
+    \href{mailto:paulgrub@umich.edu}{\texttt{paulgrub@umich.edu}} \quad
+    Beyster 4709}
+\end{center}
+
+\vspace{0.5em}
+\hrule
+\vspace{1em}
+
+%-----------------------------------------------------------------------
+% Agenda
+%-----------------------------------------------------------------------
+\section*{Agenda}
+\begin{itemize}
+  \item Frontends and witness extension
+  \item Computation transcripts
+  \item Translation soundness and nondeterminism
+  \item ASIC and CPU programming models
+  \item ASIC-model frontend constraints
+\end{itemize}
+
+\hrule
+\vspace{1em}
+
+%-----------------------------------------------------------------------
+\section{Frontends}
+%-----------------------------------------------------------------------
+
+A frontend is the layer that connects an ordinary programming abstraction to
+the algebraic representation consumed by a proof system.
+
+\begin{highlight}[title={Frontend Output Triple}]
+For a source program
+\[
+  P(x,w) \in \{0,1\},
+\]
+a frontend produces:
+\begin{enumerate}
+  \item an algebraic representation $C$ of the computation,
+  \item a witness-extension procedure $E$ that maps $(x,w)$ to compiled inputs
+        $(x',w')$,
+  \item a correctness guarantee of the form
+        \[
+          P(x,w)=1
+          \iff
+          C(x',w')=1
+          \qquad\text{for } (x',w') = E(x,w).
+        \]
+\end{enumerate}
+\end{highlight}
+
+The point of the source program $P$ is not merely syntactic convenience.  It
+captures the intended relation using familiar control-flow and data-abstraction
+mechanisms.  The compiled representation $C$ is then the object actually
+consumed by the backend proof system.
+
+\begin{definition}[Witness extension]
+The witness-extension procedure $E$ is the auxiliary computation that turns a
+source-level witness into the full compiled witness required by the algebraic
+representation.
+\end{definition}
+
+The frontend therefore does more than compilation in the ordinary programming
+language sense.  It also specifies how the hidden witness must be enriched so
+that the backend relation can be checked.
+
+%-----------------------------------------------------------------------
+\section{Programs and Transcripts}
+%-----------------------------------------------------------------------
+
+The central witness object for a frontend is often a \emph{transcript} of the
+execution.  A transcript records the values of intermediate variables rather
+than only the final output.
+
+\begin{definition}[Computation transcript]
+For a deterministic program execution, a transcript is the ordered collection
+of internal states or intermediate variable values produced during that
+execution.
+\end{definition}
+
+Consider the source program
+\[
+\begin{array}{l}
+\algo{factorial}(n): \\
+\quad \algo{acc} \leftarrow 1 \\
+\quad \text{for } i = n,n-1,\ldots,1: \\
+\qquad \algo{acc} \leftarrow \algo{acc} \cdot i \\
+\quad \text{return } \algo{acc}.
+\end{array}
+\]
+For $n=4$, one possible transcript is
+\[
+  (\algo{acc}_0,i_0) = (1,4),\ 
+  (\algo{acc}_1,i_1) = (4,3),\ 
+  (\algo{acc}_2,i_2) = (12,2),\ 
+  (\algo{acc}_3,i_3) = (24,1).
+\]
+
+\begin{remark}
+The proof objective is transcript verification rather than transcript
+generation.  The prover supplies the internal values, and the verifier checks
+that adjacent states satisfy the program relation.
+\end{remark}
+
+This point is especially important for zero knowledge.  The prover can provide
+auxiliary values that would be inefficient or unnatural to recompute inside the
+constraint system, as long as the constraints verify their consistency.
+
+%-----------------------------------------------------------------------
+\section{Structural Design Issues}
+%-----------------------------------------------------------------------
+
+\subsection{Nondeterminism}
+
+Frontend design usually treats proving as a nondeterministic verification task.
+An expensive computation can be replaced by a guessed value together with a
+cheap consistency check.  Multiplicative inverses are the standard example:
+instead of computing $a^{-1}$ inside the circuit, the prover supplies a value
+$b$ and the circuit checks
+\[
+  ab = 1.
+\]
+
+\subsection{Enriching the Target Model}
+
+The target algebraic model need not be plain $\algo{R1CS}$.  Modern backends
+often expose richer primitives such as lookup arguments, custom gates, or
+variants of $\algo{R1CS}$ with extra structure.  A frontend can exploit these
+features if doing so yields a more compact or more natural representation of
+the source computation.
+
+\subsection{Translation Soundness and Completeness}
+
+The frontend translation has two basic correctness obligations:
+\begin{itemize}
+  \item \textbf{Completeness:} every valid source-level execution should map to
+        a valid compiled witness.
+  \item \textbf{Soundness:} every accepting compiled witness should correspond
+        to a valid source-level execution of the intended program.
+\end{itemize}
+
+The first obligation is ordinary compiler correctness in the proving
+direction.  The second obligation is stronger: it rules out bugs in the
+translation that accidentally enlarge the accepted relation.
+
+%-----------------------------------------------------------------------
+\section{ASIC and CPU Programming Models}
+%-----------------------------------------------------------------------
+
+\begin{definition}[ASIC-model frontend]
+An ASIC-model frontend translates the source program into a fixed algebraic
+computation by expanding the executed operations line by line into the target
+constraint system.
+\end{definition}
+
+For a loop such as
+\[
+\begin{array}{l}
+i \leftarrow 0; \\
+\text{for } j = 0; j < 10; j++ \text{ do } i \leftarrow i+1,
+\end{array}
+\]
+the ASIC-model translation unrolls the loop into static single-assignment
+(\algo{SSA}) form:
+\[
+  z = 0,\quad
+  z_0 = z + 1,\quad
+  z_1 = z_0 + 1,\quad
+  \ldots,\quad
+  z_9 = z_8 + 1.
+\]
+
+The fixed circuit structure is the defining feature.  Every program path that
+may occur must already be reflected in the compiled algebraic object.
+
+By contrast, a CPU-model frontend compiles the program to an instruction set
+architecture and reasons about the resulting execution trace: opcode sequence,
+register states, and memory accesses.  Mutable memory and data-dependent
+control flow are then handled through transcript constraints rather than by
+fully unrolling the source program into one static arithmetic object.
+
+\begin{remark}
+The CPU model is closer to ordinary compilation pipelines because the frontend
+can target assembly or bytecode rather than a bespoke arithmetic intermediate
+representation.
+\end{remark}
+
+%-----------------------------------------------------------------------
+\section{ASIC-Model Frontends in Practice}
+%-----------------------------------------------------------------------
+
+Representative ASIC-model frontends include
+\[
+  \text{\algo{Buffet}, \algo{Pantry}, \algo{Pequin}, \algo{Pinocchio},
+  \algo{xjSnark}, \algo{CirC}, \algo{Noir}, \algo{Circom},
+  \algo{Lurk}, \algo{Bellman}}.
+\]
+
+One important structural distinction is between embedded domain-specific
+languages and compiled languages:
+\begin{itemize}
+  \item embedded languages reuse a host language and embed proving constructs
+        into it;
+  \item compiled languages define their own syntax and type system before
+        lowering to the backend model.
+\end{itemize}
+
+\algo{P4} is an example of the embedded-language side of this distinction.
+
+Several restrictions appear repeatedly in ASIC-model frontends:
+\begin{enumerate}
+  \item the dominant scalar datatype is usually the backend field element;
+  \item loops require static bounds so that the computation can be unrolled;
+  \item some source-level computations are enforced inside the proof, while
+        others are left unchecked unless the programmer inserts explicit
+        constraints.
+\end{enumerate}
+
+These restrictions are not accidental.  They reflect the fact that the target
+object is still a fixed algebraic relation.  The frontend succeeds when the
+source language exposes enough ordinary programming structure to be usable while
+still compiling cleanly into that fixed target.
+
+\end{document}
