@@ -1,0 +1,423 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in, headheight=14pt]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{fancyhdr}
+\usepackage{tcolorbox}
+\usepackage{microtype}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{arrows.meta, positioning, calc, shapes.geometric}
+
+\input{notation.tex}
+\input{zk-notation.tex}
+\input{environments.tex}
+\input{lecture-macros.tex}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{EECS 498/CSE 598: Zero-Knowledge Proofs}
+\rhead{Winter 2026}
+\lfoot{Lecture 18: Memory Fingerprinting, Lookup Arguments, and Plookup}
+\rfoot{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+
+% Lecture-specific macros
+\tcbuselibrary{skins, breakable}
+
+\newtcolorbox{highlight}[1][]{
+  colback=blue!5!white,
+  colframe=blue!60!black,
+  fonttitle=\bfseries,
+  #1
+}
+
+\newtcolorbox{graybox}[1][]{
+  colback=gray!8,
+  colframe=gray!50,
+  fonttitle=\bfseries,
+  #1
+}
+
+\newcommand{\Plookup}{\ensuremath{\mathsf{Plookup}}}
+
+\begin{document}
+
+%-----------------------------------------------------------------------
+% Title Block
+%-----------------------------------------------------------------------
+\begin{center}
+  {\LARGE \textbf{EECS 498 / CSE 598: Zero-Knowledge Proofs}}\\[6pt]
+  {\large Winter 2026}\\[4pt]
+  {\large \textbf{Lecture 18: Memory Fingerprinting, Lookup Arguments, and Plookup}}\\[4pt]
+  {\large Instructor: Paul Grubbs \quad
+    \href{mailto:paulgrub@umich.edu}{\texttt{paulgrub@umich.edu}} \quad
+    Beyster 4709}
+\end{center}
+
+\vspace{0.5em}
+\hrule
+\vspace{1em}
+
+%-----------------------------------------------------------------------
+% Agenda
+%-----------------------------------------------------------------------
+\section*{Agenda}
+\begin{itemize}
+  \item Memory fingerprinting
+  \item Multiset equality via polynomial identity testing
+  \item Randomized checks inside CPU-model frontends
+  \item Lookup arguments
+  \item Simplified $\mathsf{Plookup}$
+  \item Modern CPU-model frontends
+\end{itemize}
+
+\hrule
+\vspace{1em}
+
+%-----------------------------------------------------------------------
+\section{Memory Fingerprinting}
+%-----------------------------------------------------------------------
+
+Memory fingerprinting is an alternative to Merkle-tree-based authenticated
+memory for proving memory consistency in CPU-model frontends.  The dominant
+advantage is not asymptotic avoidance of processing memory accesses, but a
+substantial improvement in the per-access constants.
+
+\subsection{Randomized Circuits}
+
+The fingerprinting construction uses a randomized verification step.  The
+relevant abstraction is a randomized circuit
+\[
+  C(x,w;r),
+\]
+where $x$ is the public input, $w$ is the witness, and $r$ is verifier-chosen
+randomness.  Soundness is taken over the random choice of $r$.
+
+\begin{definition}[Randomized circuit]
+A randomized circuit is a circuit with public input $x$, witness $w$, and
+verifier challenge $r$, together with a soundness guarantee over the choice of
+$r$.
+\end{definition}
+
+A randomized circuit is the algebraic analogue of a public-coin
+Merlin--Arthur verification procedure.
+
+\begin{highlight}[title={Randomized Memory-Fingerprinting Pattern}]
+For a fixed public input $x$:
+\begin{enumerate}
+  \item Commit to the portion of the witness that does not depend on the
+        challenge and obtain a pre-challenge commitment $c_p$.
+  \item Sample a verifier challenge $r \getsr \F$.
+  \item Compute the remaining witness data and a proof $\pi$ that
+        $C(x,w;r)=1$.
+  \item Verify $\pi$ relative to $(x,c_p,r)$.
+\end{enumerate}
+\end{highlight}
+
+When the protocol is public coin, this interaction can be compiled away with
+Fiat--Shamir by seeding the transcript with the commitment $c_p$.
+
+\subsection{Restricted Memory Transcripts}
+
+The memory-fingerprinting argument works with memory-access tuples of the form
+\[
+  (\tau,\ a,\ v,\ \tau_{\mathrm{prev}}),
+\]
+where:
+\begin{itemize}
+  \item $\tau$ is the current timestamp,
+  \item $a$ is the accessed location,
+  \item $v$ is the value returned or written,
+  \item $\tau_{\mathrm{prev}}$ is version information identifying the previous write
+        associated with that value.
+\end{itemize}
+
+The reduction to multiset equality uses the following structural restrictions
+on the transcript.
+
+\begin{enumerate}
+  \item Add an initial write to every memory location.
+  \item Before every write, insert a dummy read of the same location.
+  \item After every read, insert a write-back of the value that was just read.
+  \item On every write, store the current timestamp together with the value.
+  \item After program termination, read every memory location once.
+  \item Reject if any read returns a timestamp larger than the current
+        timestamp.
+\end{enumerate}
+
+If memory has $s$ locations, the initial writes can be indexed by timestamps
+$0,\ldots,s-1$.
+
+The timestamp component is a version tag.  Without it, an adversary could try
+to justify a later read using an older value that had once been stored at the
+same address.  The reject condition prevents ``reads from the future'' and is
+part of the versioning invariant.
+
+\subsection{Reduction to Multiset Equality}
+
+\begin{proposition}[Memory consistency from multiset equality]
+Consider a memory transcript satisfying the restrictions above, and assume that
+the reject condition is never triggered.  Then the transcript is consistent,
+meaning that every read returns the most recently written value, if and only if
+the sequence of read operations and the sequence of write operations are equal
+as multisets.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+Each read contributes a tuple whose value and version information must match a
+previous write.  If the transcript is consistent, every read tuple is matched
+by exactly one write tuple, and the two multisets coincide.
+
+Conversely, if the multisets coincide and the versioning invariant is enforced,
+then every read must correspond to some previous write of the same versioned
+value.  The version tag rules out reordering attacks in which a stale value is
+reused after a later write to the same address.
+\end{proof}
+
+\subsection{Encoding Tuples as Field Elements}
+
+The multiset-equality protocol works over field elements.  The simplest case is
+the injective one: if the tuple
+\[
+  (\tau,a,v,\tau_{\mathrm{prev}})
+\]
+fits into a single field element by concatenation, then tuple equality is
+exactly equality of the encoded field elements.
+
+If the tuple is too large to concatenate directly, a randomized compression can
+be used instead.  The verifier supplies random coefficients and the tuple is
+compressed into a single field element with a collision probability bounded in
+terms of the field size.  The injective concatenation case is used below.
+
+%-----------------------------------------------------------------------
+\section{Multiset Equality via Polynomial Identity Testing}
+%-----------------------------------------------------------------------
+
+Let
+\[
+  A = (a_1,\ldots,a_t)
+  \qquad\text{and}\qquad
+  B = (b_1,\ldots,b_t)
+\]
+be multisets of elements of $\F$.
+
+\begin{definition}[Characteristic polynomial of a multiset]
+Define
+\[
+  P_A(X) = \prod_{i=1}^{t}(a_i - X)
+  \qquad\text{and}\qquad
+  P_B(X) = \prod_{i=1}^{t}(b_i - X).
+\]
+\end{definition}
+
+The multisets are equal exactly when the two polynomials are equal.
+
+\begin{protocol}[Randomized multiset-equality check]
+Given oracle access to $P_A$ and $P_B$:
+\begin{enumerate}
+  \item the verifier samples $r \getsr \F$;
+  \item the prover returns $P_A(r)$ and $P_B(r)$;
+  \item the verifier accepts iff $P_A(r)=P_B(r)$.
+\end{enumerate}
+\end{protocol}
+
+\begin{proposition}[Soundness]
+If $A \neq B$ as multisets, then the multiset-equality test above accepts with
+probability at most
+\[
+  \frac{t}{|\F|}.
+\]
+\end{proposition}
+
+\begin{proof}
+If $A \neq B$, then $P_A - P_B$ is a nonzero polynomial of degree at most $t$.
+A nonzero polynomial of degree at most $t$ has at most $t$ roots in $\F$.
+Hence
+\[
+  \Pr_{r \getsr \F}[P_A(r)=P_B(r)]
+  =
+  \Pr_{r \getsr \F}[(P_A-P_B)(r)=0]
+  \le \frac{t}{|\F|}.
+\]
+\end{proof}
+
+Under injective tuple encoding, this polynomial test can be applied directly to
+the multisets of memory-access tuples.
+
+%-----------------------------------------------------------------------
+\section{Randomized Checks Inside CPU-Model Frontends}
+%-----------------------------------------------------------------------
+
+The CPU-step relation itself remains deterministic.  The randomized part enters
+only in the memory-consistency check.  A direct frontend architecture first
+computes the deterministic execution trace, uses local step checks on adjacent
+states, and extracts the memory transcript that will later be checked
+separately.
+
+The witness then splits naturally into two portions:
+\[
+  Z_1 = (x,\ s_1,\ldots,s_T,\ \text{deterministic step and preprocessing data}),
+\]
+\[
+  Z_2 = (\text{post-challenge fingerprint evaluations and auxiliary data}).
+\]
+
+The state trace can be computed before $r$ is known, because the execution of
+the program itself is deterministic once the input is fixed.  The fingerprint
+subprotocol is the only part that needs the verifier's challenge.
+
+The pre-challenge witness consists of the full execution trace together with
+the deterministic preprocessing on the memory transcript.  Only the final
+fingerprint evaluations depend on the verifier challenge.  The local step
+checks and the initial memory checks therefore remain in $Z_1$, while the
+challenge-dependent memory fingerprint forms the relevant portion of $Z_2$.
+
+In an $\algo{R1CS}$ implementation, the deterministic step checks appear as the
+usual local transition checks on adjacent states.  The randomized memory check
+is attached only after the verifier challenge is fixed.  Since the memory
+fingerprinting protocol is public coin, the extra interaction can again be
+removed by Fiat--Shamir, seeded by the commitment to $Z_1$.
+
+%-----------------------------------------------------------------------
+\section{Lookup Arguments}
+%-----------------------------------------------------------------------
+
+Most of the complexity of the full memory-fingerprinting problem comes from
+writes.  In a read-only setting, timestamps and versioning disappear, and the
+problem becomes much simpler.
+
+Fix a public immutable table $T = (T[0], T[1], \ldots)$.  The witness now
+contains a sequence of claimed index-value pairs
+\[
+  (a_1,v_1),\ldots,(a_t,v_t),
+\]
+and the task is to show that $T[a_i] = v_i$ for every $i$.
+
+After concatenating or randomly compressing each pair into a single field
+element, the problem becomes the following: given a public table and a witness
+sequence
+\[
+  f_1,\ldots,f_N,
+\]
+prove that every $f_i$ is contained in the public table.
+
+This is the setting for lookup arguments.
+
+%-----------------------------------------------------------------------
+\section{Simplified \texorpdfstring{\Plookup}{Plookup}}
+%-----------------------------------------------------------------------
+
+Write the public lookup table as $S = (S_1,\ldots,S_B)$, the claimed lookup
+values as $F = (F_1,\ldots,F_N)$, and the witness as
+$W = (W_1,\ldots,W_N)$, where $W$ is claimed to be the sorted version of $F$.
+
+\begin{graybox}[title={Simplified \Plookup\ Local Conditions}]
+Public data:
+\[
+  S = (S_1,\ldots,S_B), \qquad F = (F_1,\ldots,F_N).
+\]
+Witness:
+\[
+  W = (W_1,\ldots,W_N),
+\]
+where $W$ is claimed to be the sorted version of $F$.
+
+Assumptions:
+\begin{enumerate}
+  \item every table element $S_i$ is looked up at least once;
+  \item $S_1,\ldots,S_B$ is a contiguous interval of integers.
+\end{enumerate}
+
+Checks:
+\begin{enumerate}
+  \item $W$ is a permutation of $F$;
+  \item $W_1 = S_1$;
+  \item $W_N = S_B$;
+  \item for every $i=2,\ldots,N$,
+        \[
+          (W_i - W_{i-1})\bigl(W_i - (W_{i-1}+1)\bigr) = 0.
+        \]
+\end{enumerate}
+\end{graybox}
+
+The last constraint says that adjacent entries of $W$ differ by either $0$ or
+$1$.  Because the table is a contiguous interval and the endpoints are fixed,
+these local constraints imply that the sorted witness never leaves the table
+and cannot skip any table value.
+
+\begin{proposition}[Correctness of the simplified check]
+Under the two simplifying assumptions above, if $W$ satisfies the four checks,
+then every $F_i$ belongs to the public table $S$.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+The permutation check implies that $W$ and $F$ contain the same elements with
+the same multiplicities.  The endpoint checks and the local constraints force
+$W$ to be a nondecreasing sequence whose adjacent differences are always $0$ or
+$1$, beginning at $S_1$ and ending at $S_B$.  Every element of $W$ therefore
+lies in the interval defined by the table, and hence every element of $F$ does
+as well.
+\end{proof}
+
+\subsection{Cost}
+
+The permutation check can be implemented with a polynomial-identity or
+permutation argument, and therefore costs $O(N)$ constraints.  The endpoint
+checks are constant cost, and the local relation
+\[
+  (W_i - W_{i-1})\bigl(W_i - (W_{i-1}+1)\bigr) = 0
+\]
+costs only a constant number of constraints per position.  The overall cost is
+therefore linear in $N$.
+
+\begin{remark}
+The argument reduces a global membership statement to a local sortedness
+relation plus a permutation check.
+\end{remark}
+
+%-----------------------------------------------------------------------
+\section{Modern CPU-Model Frontends}
+%-----------------------------------------------------------------------
+
+CPU-model frontends provide an end-to-end path from ordinary compiled programs
+to zero-knowledge proofs of execution.  At the level of abstraction, a frontend
+for a sufficiently expressive instruction set removes the need to design a
+separate ASIC-style proving language for every application.
+
+In principle, a proof system for a real instruction set architecture would make
+it possible to compile an ordinary program to assembly and then prove facts
+about the resulting execution trace directly.  In practice, architectures such
+as x86 carry substantial legacy complexity, including features such as
+binary-coded-decimal instructions that are awkward for proof systems.  Current
+systems therefore tend to favor cleaner architectures such as RISC-V.
+
+Read-only lookup arguments fit naturally into this broader picture because many
+useful CPU tables are immutable, and immutable tables admit substantially
+simpler consistency arguments than fully mutable memory.
+
+\begin{remark}
+The structural split is stable across modern designs: local transition checks
+handle CPU execution, memory fingerprinting handles mutable memory, and lookup
+arguments handle immutable tables.
+\end{remark}
+
+\bigskip
+\hrule
+\bigskip
+
+\begin{thebibliography}{9}
+
+\bibitem{GabizonWilliamson20}
+  A.~Gabizon and Z.~J. Williamson,
+  ``plookup: A simplified polynomial protocol for lookup tables,''
+  \emph{IACR ePrint 2020/315}, 2020.
+
+\end{thebibliography}
+
+\end{document}

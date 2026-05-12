@@ -1,0 +1,241 @@
+\documentclass[11pt]{article}
+
+\usepackage[margin=1in, headheight=14pt]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{fancyhdr}
+\usepackage{tcolorbox}
+\usepackage{microtype}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{arrows.meta, positioning, calc, shapes.geometric}
+
+\input{notation.tex}
+\input{zk-notation.tex}
+\input{environments.tex}
+\input{lecture-macros.tex}
+
+%----------------------- Page style -----------------------
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{EECS 498/CSE 598: Zero-Knowledge Proofs}
+\rhead{Winter 2026}
+\lfoot{Lecture 16: CPU-Model Frontends I}
+\rfoot{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+
+% Lecture-specific macros
+\tcbuselibrary{skins, breakable}
+
+\newtcolorbox{highlight}[1][]{
+  colback=blue!5!white,
+  colframe=blue!60!black,
+  fonttitle=\bfseries,
+  #1
+}
+
+\newtcolorbox{graybox}[1][]{
+  colback=gray!8,
+  colframe=gray!50,
+  fonttitle=\bfseries,
+  #1
+}
+
+\begin{document}
+
+%-----------------------------------------------------------------------
+% Title block
+%-----------------------------------------------------------------------
+\begin{center}
+  {\LARGE \textbf{EECS 498 / CSE 598: Zero-Knowledge Proofs}}\\[6pt]
+  {\large Winter 2026}\\[4pt]
+  {\large \textbf{Lecture 16: CPU-Model Frontends I}}\\[4pt]
+  {\large Instructor: Paul Grubbs \quad
+    \href{mailto:paulgrub@umich.edu}{\texttt{paulgrub@umich.edu}} \quad
+    Beyster 4709}
+\end{center}
+
+\vspace{0.5em}
+\hrule
+\vspace{1em}
+
+%-----------------------------------------------------------------------
+% Agenda
+%-----------------------------------------------------------------------
+\section*{Agenda}
+\begin{itemize}
+  \item Random-access machines and the CPU abstraction
+  \item Why CPU-model frontends are useful
+  \item Core ideas behind CPU-model frontends
+  \item Memory accesses
+\end{itemize}
+
+\hrule
+\vspace{1em}
+
+\section{Random-Access Machines and the CPU Abstraction}
+
+A convenient abstraction for a CPU-model frontend is the \emph{random-access machine} (\algo{RAM}). This model consists of the following components.
+
+\begin{definition}[Random-access machine]
+A random-access machine has:
+\begin{enumerate}
+  \item main memory with $S$ cells, each of width $w$ bits,
+  \item a small collection of special cells called \emph{registers},
+  \item an instruction set containing memory operations and arithmetic or Boolean operations,
+  \item special registers for flags and the program counter.
+\end{enumerate}
+\end{definition}
+
+The memory width $w$ is the word size of the architecture. A $32$-bit or $64$-bit machine refers to this width. A single $\algo{read}$ or $\algo{write}$ transfers one word of width $w$.
+
+Registers act as scratch space for instruction execution. A typical pattern is to load data from memory into registers, apply an arithmetic or Boolean operation to those registers, and then write the result back to memory when needed.
+
+Memory instructions read or write a word at a specified address. For example,
+\[
+  \algo{read}\; A,\; \texttt{FF81}
+\]
+loads the word stored at address $\texttt{FF81}$ into register $A$, and
+\[
+  \algo{write}\; A,\; \texttt{FF81}
+\]
+stores the contents of register $A$ at address $\texttt{FF81}$.
+
+Arithmetic and Boolean instructions include operations such as addition, multiplication, shifts, XOR, and conditional branches. The program counter $\algo{pc}$ stores the location of the next instruction. Flag registers store control information such as zero, carry, or overflow conditions, and branch instructions can inspect those flags.
+
+This machine model is deliberately simple. Pipelining, instruction caches, prefetching, and superscalar execution are omitted. The simplification is useful because the goal is efficient verification of computation. A richer instruction set still matters for proof efficiency, since more expressive instructions can shorten the execution transcript.
+
+\section{Why CPU-Model Frontends?}
+
+The earlier ASIC-style frontend fixes a circuit in advance. CPU-model frontends support a much wider notion of computation.
+
+\subsection{Drawbacks of the ASIC model}
+
+\begin{itemize}
+  \item The program is fixed once the circuit is fixed.
+  \item Mutable main memory is absent as a native abstraction.
+  \item Computations are typically forced into static single assignment form.
+  \item Data-dependent loops and control flow require unrolling up to a predetermined bound.
+  \item Ordinary software must be rewritten in a specialized proving language.
+  \item Direct reasoning about CPU execution becomes awkward, since the computation must first be encoded inside another model.
+\end{itemize}
+
+A CPU-model frontend addresses these issues by taking the sequence of executed instructions as part of the instance under consideration. Up to a chosen execution bound, the frontend can follow a compiled program with ordinary control flow, mutable memory, and repeated $\algo{read}$ or $\algo{write}$ operations on the same address.
+
+This viewpoint is also closer to the way real programs are developed. Languages such as Rust compile to an instruction set architecture, so a proving system built around a CPU abstraction lines up naturally with conventional toolchains.
+
+\section{Core Construction of a CPU-Model Frontend}
+
+\subsection{Performance Questions}
+
+\begin{highlight}[title={CPU-Model Frontend Cost Drivers}]
+\textbf{A CPU-model frontend is governed by three high-level cost drivers.}
+\begin{enumerate}[leftmargin=2em, topsep=2pt, itemsep=0pt]
+  \item The executed machine-step count $t$.
+  \item The memory footprint together with the total number of memory accesses.
+  \item The cost of embedding one instruction of the chosen $\algo{ISA}$ into $\algo{R1CS}$.
+\end{enumerate}
+\end{highlight}
+
+Fix a program $P$, an input $X$, and an instruction set architecture $\algo{ISA}$ that specifies both the allowed instructions and the semantics of memory. Compile $P$ into a program $P'$ for $\algo{ISA}$. This compiled representation may be viewed as bytecode or assembly, meaning an opcode sequence together with its memory behavior.
+
+Running $P'$ on input $X$ produces an execution transcript $T$. The proof statement is that executing $P'$ on $X$ yields a designated output $Y$. The witness is the transcript $T$ certifying that execution.
+
+\begin{definition}[Execution transcript]
+Let $t$ be the number of executed machine steps. An execution transcript has the form
+\[
+  T = \bigl((\tau, R_\tau, A_\tau)\bigr)_{\tau=0}^{t-1},
+\]
+where for each timestamp $\tau$:
+\begin{itemize}
+  \item $\tau$ is the step counter,
+  \item $R_\tau$ is the full register state, including flags and the program counter,
+  \item $A_\tau$ records the memory access performed at that step.
+\end{itemize}
+\end{definition}
+
+The timestamp and the program counter play different roles. The timestamp counts executed steps in chronological order. The program counter is one component of the machine state, so jumps and loops can send it to different instruction locations while the timestamp continues to increase by one.
+
+\subsection{Why the transcript is compressed}
+
+A naive transcript would store the entire machine state at every step, including every cell of main memory. That representation is prohibitively large. The witness committed by the prover scales with the total amount of stored state, so materializing all of memory at every timestamp would dominate the proving cost.
+
+The transcript above stores only the components that change from step to step: the register file and the read or write event. This is enough to reconstruct the machine evolution once the public program and the memory-consistency checks are fixed.
+
+\paragraph{Initial memory state.}
+The initial contents of memory must be agreed in advance. A standard choice is the all-zero state. Any other public initial memory state is also valid, provided both parties use the same one.
+
+\section{Checking CPU-Step Consistency}
+
+The proof system must enforce two forms of consistency:
+\begin{enumerate}
+  \item correctness of each CPU step on the registers,
+  \item correctness of each memory access.
+\end{enumerate}
+
+The step relation on registers is the easier part. One can build a fixed $\algo{R1CS}$ gadget that checks adjacent transcript entries. Conceptually, the gadget is a switch on the opcode:
+\[
+  F(\algo{op}, \algo{reg}_1, \algo{reg}_2, \algo{st})
+\]
+with branches such as
+\[
+  \text{if } \algo{op} = \algo{add}, \qquad
+  \text{if } \algo{op} = \algo{mul}, \qquad
+  \text{if } \algo{op} = \algo{xor}, \qquad \ldots
+\]
+Each branch applies the correct arithmetic or Boolean constraints to the relevant registers and checks that the next register state is the one obtained by executing that instruction.
+
+Applying this gadget to every adjacent pair
+\[
+  (\tau, R_\tau, A_\tau),\; (\tau+1, R_{\tau+1}, A_{\tau+1})
+\]
+enforces correctness of the CPU transition function throughout the execution.
+
+The transcript keeps the full register file at each step because that choice makes the transition constraints straightforward. More aggressive compression is possible, though it complicates the constraint system.
+
+Modern CPU-model frontends usually avoid paying the full overhead of a literal switch statement over all opcodes. More refined designs arrange the constraints so that the cost tracks the executed instruction more closely.
+
+\section{Memory Consistency}
+
+Memory consistency is the difficult part. The transcript is naturally ordered by timestamp, which is ideal for checking the step relation. Memory consistency wants a different ordering.
+
+\subsection{Why timestamp order is hard}
+
+Suppose a step writes to some address $a$. In timestamp order, the transcript gives no immediate local witness for the next read of $a$, since the next access to $a$ may occur much later. Random access means that reads and writes to the same address are interleaved with accesses to many other addresses.
+
+Zero knowledge adds another difficulty. Memory addresses themselves may be sensitive, so the proof system must validate memory behavior without exposing more information than necessary.
+
+\subsection{Address-ordered checking}
+
+A simple consistency rule appears once the memory accesses are reordered by address and ties are broken by timestamp.
+
+\begin{proposition}[Local memory-consistency check]
+Take the memory-access entries from the transcript and sort them first by address and then by timestamp. Memory consistency is then verified by scanning adjacent pairs. Whenever two consecutive entries have the same address and the later entry is a $\algo{read}$, the value returned by that read must equal the value stored in the earlier entry. If the first access to an address is a $\algo{read}$, its value must equal the agreed initial contents of that address.
+\end{proposition}
+
+\begin{proof}
+Fix an address $a$. After sorting, every access to $a$ appears in one contiguous block, and within that block the accesses are arranged in chronological order. For any read of $a$, the immediately preceding entry in that block is exactly the most recent earlier access to $a$. That entry determines the current contents of address $a$. Therefore the read is correct exactly when its value matches the value stored in the preceding entry. Since different addresses occupy disjoint blocks, repeating this check across all adjacent pairs proves global memory consistency.
+\end{proof}
+
+\begin{graybox}
+\textbf{\underline{One address block after sorting:}}\\
+For a fixed address $a$, the sorted access list may contain
+\[
+  (a, \tau_1, \algo{write}, v_1),\;
+  (a, \tau_3, \algo{read}, v_1),\;
+  (a, \tau_8, \algo{write}, v_2),\;
+  (a, \tau_9, \algo{read}, v_2).
+\]
+The local rule is:
+\begin{itemize}[leftmargin=2em, topsep=2pt, itemsep=0pt]
+  \item each $\algo{read}$ is checked against the value in the immediately preceding entry in the block;
+  \item if the block begins with a $\algo{read}$, that value is checked against the agreed public initial memory state.
+\end{itemize}
+\end{graybox}
+
+\end{document}

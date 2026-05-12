@@ -1,0 +1,302 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in, headheight=14pt]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{fancyhdr}
+\usepackage{tcolorbox}
+\usepackage{microtype}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{arrows.meta, positioning, calc, shapes.geometric}
+
+\input{notation.tex}
+\input{zk-notation.tex}
+\input{environments.tex}
+\input{lecture-macros.tex}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{EECS 498/CSE 598: Zero-Knowledge Proofs}
+\rhead{Winter 2026}
+\lfoot{Lecture 15: ASIC-Model Frontends II: Programs in R1CS}
+\rfoot{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+
+% Lecture-specific macros
+\tcbuselibrary{skins, breakable}
+
+\newtcolorbox{graybox}[1][]{
+  colback=gray!8,
+  colframe=gray!50,
+  fonttitle=\bfseries,
+  #1
+}
+
+\begin{document}
+
+%-----------------------------------------------------------------------
+% Title Block
+%-----------------------------------------------------------------------
+\begin{center}
+  {\LARGE \textbf{EECS 498 / CSE 598: Zero-Knowledge Proofs}}\\[6pt]
+  {\large Winter 2026}\\[4pt]
+  {\large \textbf{Lecture 15: ASIC-Model Frontends II: Programs in R1CS}}\\[4pt]
+  {\large Instructor: Paul Grubbs \quad
+    \href{mailto:paulgrub@umich.edu}{\texttt{paulgrub@umich.edu}} \quad
+    Beyster 4709}
+\end{center}
+
+\vspace{0.5em}
+\hrule
+\vspace{1em}
+
+%-----------------------------------------------------------------------
+% Agenda
+%-----------------------------------------------------------------------
+\section*{Agenda}
+\begin{itemize}
+  \item ASIC-model frontends and the $\algo{R1CS}$ target
+  \item Encoding basic arithmetic programs
+  \item Conditionals, bit checks, and range checks
+  \item Boolean and integer operations
+  \item Optimization themes
+\end{itemize}
+
+\hrule
+\vspace{1em}
+
+%-----------------------------------------------------------------------
+\section{ASIC-Model Frontends and \texorpdfstring{$\algo{R1CS}$}{R1CS}}
+%-----------------------------------------------------------------------
+
+ASIC-model frontends target an algebraic constraint language directly.  One
+common target is a rank-$1$ constraint system.
+
+\begin{definition}[Rank-$1$ constraint system]
+Fix a witness vector $z$.  A rank-$1$ constraint is an equation of the form
+\[
+  \langle a, z \rangle \cdot \langle b, z \rangle = \langle c, z \rangle,
+\]
+where $a$, $b$, and $c$ are coefficient vectors over the backend field.  An
+\algo{R1CS} instance is a collection of such constraints, equivalently written
+as
+\[
+  Az \circ Bz = Cz.
+\]
+\end{definition}
+
+The vector $z$ usually contains a distinguished constant wire equal to $1$
+together with the ordinary program variables and any auxiliary variables
+introduced during compilation.
+
+The source languages feeding these systems often look closer to hardware or
+constraint descriptions than to full general-purpose software.  Hardware-style
+languages such as \algo{Verilog} and \algo{VHDL} provide a useful point of
+comparison because the compilation target is again a fixed dependency graph.
+
+%-----------------------------------------------------------------------
+\section{Basic Program Constructs}
+%-----------------------------------------------------------------------
+
+\subsection{Addition and Multiplication}
+
+The simplest program fragments map directly to one constraint each.  For
+example,
+\[
+\begin{array}{l}
+\algo{add1}(x): \\
+\quad y \leftarrow x + 1
+\end{array}
+\]
+becomes
+\[
+  1 + x - y = 0.
+\]
+
+Likewise,
+\[
+\begin{array}{l}
+\algo{add}(a,b): \\
+\quad c \leftarrow a+b
+\end{array}
+\qquad\leadsto\qquad
+a+b-c=0
+\]
+and
+\[
+\begin{array}{l}
+\algo{mul}(a,b): \\
+\quad c \leftarrow ab
+\end{array}
+\qquad\leadsto\qquad
+ab=c.
+\]
+
+The general compilation pattern is to introduce a new variable for every
+intermediate value and then constrain that variable by a low-degree equation.
+
+\subsection{Composite Arithmetic Expressions}
+
+Consider
+\[
+\begin{array}{l}
+\algo{addmul}(a_0,a_1,b_0,b_1): \\
+\quad \text{return } a_0b_0 + a_1b_1.
+\end{array}
+\]
+A standard static-single-assignment decomposition is
+\[
+  c_0 = a_0b_0,\qquad
+  c_1 = a_1b_1,\qquad
+  d = c_0 + c_1.
+\]
+The resulting \algo{R1CS} description uses one multiplication constraint for
+each $c_i$ and one linear constraint for the final addition.
+
+Division is represented by rewriting it as a multiplicative relation.  For
+\[
+\begin{array}{l}
+\algo{divide}(a,b): \\
+\quad c \leftarrow a/b,
+\end{array}
+\]
+the checked form is
+\[
+  cb = a.
+\]
+If the intended source semantics excludes division by zero, then the frontend
+must also enforce the side condition $b \neq 0$ by an auxiliary gadget.
+
+\begin{proposition}
+Straightline arithmetic over a field can be compiled into \algo{R1CS} by
+introducing variables for intermediate values and constraining each arithmetic
+step by addition and multiplication relations.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+Every straightline program is an acyclic expression graph.  Replace each gate
+output by a fresh variable.  Addition gates contribute linear constraints and
+multiplication gates contribute rank-$1$ constraints.  The final output
+variable is then constrained to equal the source-level result.
+\end{proof}
+
+%-----------------------------------------------------------------------
+\section{Conditionals, Bits, and Ranges}
+%-----------------------------------------------------------------------
+
+Conditionals are not native field operations, so the control bit must itself be
+represented inside the constraint system.
+
+\begin{graybox}[title={Conditional-Multiplication Gadget}]
+For bit $b \in \{0,1\}$ and branch values $xy$ and $xz$, the conditional
+product
+\[
+  \algo{condMul}(x,y,z,b)
+  =
+  \begin{cases}
+    xy & \text{if } b=1, \\
+    xz & \text{if } b=0
+  \end{cases}
+\]
+can be encoded with auxiliary variables
+\[
+  c_1 = xy,\qquad
+  b' = 1-b,\qquad
+  c_0 = xz,
+\]
+\[
+  d_0 = bc_1,\qquad
+  d_1 = b'c_0,\qquad
+  d = d_0 + d_1.
+\]
+The output is $d$ together with the bitness constraint
+\[
+  b(b-1)=0.
+\]
+\end{graybox}
+
+Bit checks and range checks are the other indispensable gadgets.
+
+\begin{definition}[Bit check]
+A field element $b$ is constrained to be Boolean by the equation
+\[
+  b(b-1)=0.
+\]
+\end{definition}
+
+\begin{proposition}[Range check by bit decomposition]
+To prove that
+\[
+  x \in [0,7],
+\]
+it is enough to introduce bits $b_0,b_1,b_2$ and enforce
+\[
+  x = 4b_2 + 2b_1 + b_0
+\]
+together with the three bitness constraints
+\[
+  b_i(b_i-1)=0
+  \qquad\text{for } i \in \{0,1,2\}.
+\]
+\end{proposition}
+
+\begin{proof}
+Every value in $[0,7]$ has a unique binary expansion using three bits, and the
+three bitness constraints ensure that no other values are possible.
+\end{proof}
+
+%-----------------------------------------------------------------------
+\section{Boolean and Integer Operations}
+%-----------------------------------------------------------------------
+
+Once variables are known to be bits, standard Boolean operations become
+low-degree polynomials:
+\[
+  a \land b = ab,
+  \qquad
+  a \lor b = a + b - ab,
+  \qquad
+  \lnot a = 1-a,
+\]
+\[
+  a \oplus b = a + b - 2ab.
+\]
+
+These formulas are the reason bit decomposition is so useful.  Integer
+operations can often be reduced to bit-level constraints plus carry or borrow
+relations.  For example, a less-than test
+\[
+  \algo{lessthan}(x,y)
+\]
+is usually compiled by decomposing $x$ and $y$ into bits and checking the first
+position at which they differ.
+
+\begin{remark}
+The native field arithmetic is efficient; the expense comes from recovering the
+intended integer or bit-string semantics inside that field.
+\end{remark}
+
+%-----------------------------------------------------------------------
+\section{Optimization Themes}
+%-----------------------------------------------------------------------
+
+Constraint efficiency depends less on the source syntax than on the choice of
+representation.  The main recurring levers are:
+\begin{itemize}
+  \item reuse intermediate variables instead of recomputing them,
+  \item minimize the number of multiplication constraints,
+  \item reduce the number of range checks and bit decompositions,
+  \item exploit backend-specific features such as lookups or custom gates when
+        the target model supports them.
+\end{itemize}
+
+The common pattern is the same one already seen in frontend design more
+generally: a mathematically equivalent encoding may still be far more expensive
+for the proof backend.
+
+\end{document}

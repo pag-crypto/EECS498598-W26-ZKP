@@ -1,0 +1,426 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in, headheight=14pt]{geometry}
+\usepackage{amsmath, amssymb}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{fancyhdr}
+\usepackage{tcolorbox}
+\usepackage{microtype}
+\usepackage{tikz}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usetikzlibrary{arrows.meta, positioning, calc, shapes.geometric}
+
+\input{notation.tex}
+\input{zk-notation.tex}
+\input{environments.tex}
+\input{lecture-macros.tex}
+
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{EECS 498/CSE 598: Zero-Knowledge Proofs}
+\rhead{Winter 2026}
+\lfoot{Lecture 22: Ecash, Blockchains, and Zerocash}
+\rfoot{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\renewcommand{\footrulewidth}{0.4pt}
+
+% Lecture-specific macros
+\tcbuselibrary{skins, breakable}
+
+\newtcolorbox{highlight}[1][]{
+  colback=blue!5!white,
+  colframe=blue!60!black,
+  fonttitle=\bfseries,
+  #1
+}
+
+\newtcolorbox{graybox}[1][]{
+  colback=gray!8,
+  colframe=gray!50,
+  fonttitle=\bfseries,
+  #1
+}
+
+\newcommand{\CRH}{\algo{CRH}}
+\newcommand{\PRF}{\algo{PRF}}
+\newcommand{\Com}{\algo{Com}}
+\newcommand{\Zerocash}{\ensuremath{\mathsf{Zerocash}}}
+\newcommand{\MT}{\mathsf{MT}}
+\newcommand{\txmint}{\mathsf{tx}_{\mathrm{mint}}}
+\newcommand{\txpour}{\mathsf{tx}_{\mathrm{pour}}}
+
+\begin{document}
+
+%-----------------------------------------------------------------------
+% Title Block
+%-----------------------------------------------------------------------
+\begin{center}
+  {\LARGE \textbf{EECS 498 / CSE 598: Zero-Knowledge Proofs}}\\[6pt]
+  {\large Winter 2026}\\[4pt]
+  {\large \textbf{Lecture 22: Ecash, Blockchains, and Zerocash}}\\[4pt]
+  {\large Instructor: Paul Grubbs \quad
+    \href{mailto:paulgrub@umich.edu}{\texttt{paulgrub@umich.edu}} \quad
+    Beyster 4709}
+\end{center}
+
+\vspace{0.5em}
+\hrule
+\vspace{1em}
+
+%-----------------------------------------------------------------------
+% Agenda
+%-----------------------------------------------------------------------
+\section*{Agenda}
+\begin{itemize}
+  \item Chaumian ecash and blockchain background
+  \item Sander--Ta Shma anonymous ecash
+  \item Zerocash coins and pour transactions
+  \item Other applications: zkVMs, rollups, and private smart contracts
+\end{itemize}
+
+\hrule
+\vspace{1em}
+
+%-----------------------------------------------------------------------
+\section{Chaumian Ecash and Blockchain Background}
+%-----------------------------------------------------------------------
+
+Electronic cash systems combine two basic goals:
+\begin{enumerate}
+  \item value conservation, so users cannot create money by deviating from the
+        protocol;
+  \item payment privacy, so a merchant or bank does not automatically learn
+        the spender's identity from an ordinary payment transcript.
+\end{enumerate}
+
+Chaum's blind-signature construction is the canonical starting point.  A user
+chooses a random serial number $sn$, blinds it, and sends the blinded value to
+the bank.  After deducting the coin's value from the user's account, the bank
+signs the blinded serial number.  The user unblinds the response and obtains a
+signature $\sigma_{sn}$ on the original serial number.
+
+Spending is simple:
+\begin{enumerate}
+  \item the user sends $(sn,\sigma_{sn})$ to the merchant;
+  \item the merchant asks the bank whether $sn$ has already appeared;
+  \item the bank rejects repeated serial numbers and honors fresh ones.
+\end{enumerate}
+
+\begin{remark}
+Blind signatures hide the serial number during withdrawal, so the bank cannot
+link the later spend transcript to the withdrawal transcript.  At the same
+time, the bank remains a trusted online party and its signing key is a single
+point of failure.
+\end{remark}
+
+\begin{definition}[Blockchain ledger]
+A blockchain is an append-only distributed ledger that gives all participants a
+common view of previously accepted transactions.  The ledger state acts as a
+public record of ownership changes, spent objects, and auxiliary consensus
+data.
+\end{definition}
+
+The blockchain viewpoint replaces the online bank by a replicated public state.
+For payment systems built on top of a ledger, the main validity checks become:
+\begin{itemize}
+  \item whether the spent object previously appeared on the ledger,
+  \item whether its serial number is fresh,
+  \item whether the transaction preserves value.
+\end{itemize}
+
+This shift turns anonymous payments into a proof problem about public state:
+membership in a ledger accumulator, ownership of a coin witness, and validity
+of a value-conservation relation.
+
+%-----------------------------------------------------------------------
+\section{Sander--Ta Shma Anonymous Ecash}
+%-----------------------------------------------------------------------
+
+Sander--Ta Shma removes the bank's signing key and replaces signed coins by
+commitments recorded in a public Merkle tree.  The bank's role is reduced to
+maintaining the integrity of that public database.
+
+\subsection{Coin Creation and Spending}
+
+A Pedersen-style commitment is used.  A user with identity
+$id$ samples
+\[
+  sn, r \getsr \F
+\]
+and computes
+\[
+  C = sn \cdot G + rH.
+\]
+The bank inserts $C$ into the public Merkle tree of issued coins.  The spend
+relation then consists of revealing the serial number $sn$ together with:
+\begin{itemize}
+  \item a proof that $C$ lies on a Merkle path to the current root $\mathsf{rt}$;
+  \item a proof of knowledge that $C$ opens to $(sn,r)$.
+\end{itemize}
+
+\begin{proposition}
+If the commitment opening proof is sound and the Merkle-path proof is sound,
+then an accepted spend corresponds to some committed coin in the bank's public
+database.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+The path proof shows that some commitment $C$ is a leaf of the Merkle tree with
+root $\mathsf{rt}$.  The opening proof shows that the same $C$ is consistent
+with the revealed serial number $sn$.  Therefore an accepted payment is linked
+to some previously issued committed coin, even though the zero-knowledge proof
+hides which leaf belongs to the spender.
+\end{proof}
+
+\subsection{Double-Spend Identification}
+
+The extended construction adds traceability for double spends.  During coin
+creation, the user chooses values $v_1,v_2,sn,r$ and forms
+\[
+  C = v_1 G_1 + v_2 G_2 + sn G_3 + rH,
+\]
+subject to the relation
+\[
+  v_2 = v_1 - id.
+\]
+Equivalently,
+\[
+  id = v_1 - v_2.
+\]
+The user proves knowledge of $(v_1,v_2,sn,r)$ and proves that this linear
+relation holds.
+
+To spend the coin at a merchant, the merchant derives a challenge
+\[
+  \mathit{chal} = H(\text{merchant ID}, \text{timestamp})
+\]
+and the user reveals
+\[
+  V = v_1 + \mathit{chal} \cdot v_2
+\]
+together with the serial number $sn$ and the usual path/opening proofs.
+
+\begin{graybox}[title={Double-Spend Tracing Rule}]
+If the same serial number is spent twice under distinct challenges
+$\mathit{chal}_1 \neq \mathit{chal}_2$, then
+\[
+  V_1 = v_1 + \mathit{chal}_1 v_2
+  \qquad\text{and}\qquad
+  V_2 = v_1 + \mathit{chal}_2 v_2.
+\]
+These two equations determine
+\[
+  v_2 = \frac{V_1 - V_2}{\mathit{chal}_1 - \mathit{chal}_2},
+  \qquad
+  v_1 = V_1 - \mathit{chal}_1 v_2,
+  \qquad
+  id = v_1 - v_2.
+\]
+\end{graybox}
+
+\begin{proposition}
+Two accepted spends of the same coin under distinct merchant challenges reveal
+the spender's identity.
+\end{proposition}
+
+\begin{proof}
+Subtracting the two spend equations yields
+\[
+  V_1 - V_2 = (\mathit{chal}_1 - \mathit{chal}_2) v_2.
+\]
+Because the challenges are distinct, $\mathit{chal}_1 - \mathit{chal}_2$ is
+invertible, so $v_2$ is determined uniquely.  Substituting back gives $v_1$,
+and then $id = v_1 - v_2$.
+\end{proof}
+
+\begin{remark}
+Ordinary one-time spending remains anonymous because one transcript reveals
+only the single linear form $V = v_1 + \mathit{chal} v_2$.  Traceability
+appears only after two distinct challenges are answered for the same serial
+number.
+\end{remark}
+
+%-----------------------------------------------------------------------
+\section{Zerocash}
+%-----------------------------------------------------------------------
+
+\Zerocash{} moves anonymous payments to a blockchain setting.  The public
+ledger stores coin commitments and spent serial numbers, while zero-knowledge
+proofs justify minting and spending without exposing the underlying private
+coin data.
+
+\subsection{Addresses, Coins, and Ledger State}
+
+Each address has a secret key $a_{sk}$ and a public key
+\[
+  a_{pk} = \PRF_{a_{sk}}(0).
+\]
+A coin is described by the tuple
+\[
+  c = (a_{pk}, v, \rho, r, s, cm),
+\]
+where:
+\begin{itemize}
+  \item $v$ is the coin value;
+  \item $\rho$ is serial-number randomness;
+  \item $r$ is commitment randomness for the address layer;
+  \item $s$ is commitment randomness for the value layer;
+  \item $cm$ is the final coin commitment.
+\end{itemize}
+
+The note commitment is built in two layers:
+\[
+  k = \Com_r(a_{pk}\|\rho),
+  \qquad
+  cm = \Com_s(v\|k).
+\]
+The ledger maintains:
+\begin{itemize}
+  \item a Merkle tree over all coin commitments $cm$;
+  \item a public list of spent serial numbers.
+\end{itemize}
+
+\subsection{Minting}
+
+To mint a coin of value $v$ for address $a_{pk}$, sample
+\[
+  \rho, r, s \getsr \bits^\lambda
+\]
+and compute
+\[
+  k = \Com_r(a_{pk}\|\rho),
+  \qquad
+  cm = \Com_s(v\|k).
+\]
+The mint transaction publishes the commitment data needed for ledger validity,
+while the ownership secrets remain hidden.  A convenient explicit form is
+\[
+  \txmint = (cm, v, k, s),
+\]
+which makes the algebraic structure of the note commitment explicit.
+
+\begin{remark}
+The commitment tree plays the same structural role as the tree in
+Sander--Ta Shma: it compresses the set of minted coins into a short public root
+that can be used inside zero-knowledge membership proofs.
+\end{remark}
+
+\subsection{Pour Transactions}
+
+A simplified pour consumes one old coin and creates two new
+coins.  If the consumed coin is owned under secret key $a_{sk}^{old}$ and has
+serial randomness $\rho^{old}$, its serial number is computed as
+\[
+  sn = \PRF_{a_{sk}^{old}}(\rho^{old}).
+\]
+Two new recipient addresses
+\[
+  a_{pk,1}^{new},
+  \qquad
+  a_{pk,2}^{new}
+\]
+receive two freshly sampled notes with commitments
+\[
+  cm_1^{new}, cm_2^{new}.
+\]
+The central invariant is value conservation:
+\[
+  v^{old} = v_1^{new} + v_2^{new}.
+\]
+
+The internal steps are:
+\begin{enumerate}
+  \item compute the old serial number $sn$ from $(a_{sk}^{old}, \rho^{old})$;
+  \item sample fresh randomness $\rho_i^{new}, r_i^{new}, s_i^{new}$ for
+        $i \in \{1,2\}$;
+  \item compute the new layered commitments
+        \[
+          k_i^{new} = \Com_{r_i^{new}}(a_{pk,i}^{new}\|\rho_i^{new}),
+          \qquad
+          cm_i^{new} = \Com_{s_i^{new}}(v_i^{new}\|k_i^{new});
+        \]
+  \item generate a zero-knowledge proof that the old note is in the ledger
+        tree, is owned by the spender, and has been re-expressed as the two new
+        notes without violating value conservation.
+\end{enumerate}
+
+\begin{highlight}[title={Public Inputs in a Simplified Pour Proof}]
+The public statement checked by the ledger contains the data needed for
+uniqueness and ledger consistency:
+\begin{itemize}
+  \item the Merkle-tree root $\mathsf{rt}$ used to authenticate the consumed note;
+  \item the revealed serial number $sn$ of the consumed note;
+  \item the new note commitments $cm_1^{new}$ and $cm_2^{new}$;
+  \item any public balance or auxiliary transaction data carried by the ledger.
+\end{itemize}
+\end{highlight}
+
+\begin{proposition}
+Assume the pour proof is sound, the ledger rejects repeated serial numbers, and
+the proof enforces membership and value conservation.  Then an accepted pour
+transaction consumes an existing note exactly once and re-expresses its value
+as valid new output notes.
+\end{proposition}
+
+\begin{proof}[Proof sketch]
+Soundness of the proof ties the revealed serial number to a committed old note
+that lies in the Merkle tree under the public root $\mathsf{rt}$.  Serial
+number freshness prevents reusing the same consumed note in a later accepted
+transaction.  The value-conservation constraint forces the sum of output values
+to match the value carried by the consumed note.  Therefore acceptance implies
+one-time consumption of existing value together with correct creation of the new
+notes.
+\end{proof}
+
+\begin{remark}
+The public ledger reveals the serial number of the spent note and the new note
+commitments, but not the spender's address secret key, the old note's address,
+or the private values and randomness used to form the new notes.
+\end{remark}
+
+%-----------------------------------------------------------------------
+\section{Other Applications}
+%-----------------------------------------------------------------------
+
+The same proof patterns reappear in several later systems:
+\begin{itemize}
+  \item \emph{zkVMs} prove correct execution of a virtual machine while
+        revealing only the claimed public input and output;
+  \item \emph{rollups} aggregate many ledger transitions into a compact proof
+        checked by a base chain;
+  \item \emph{private smart contracts} combine hidden state with proofs that
+        each state transition satisfies the contract rules.
+\end{itemize}
+
+All three settings rely on the same ingredients developed throughout the later
+part of the course: succinct proofs for state transitions, authenticated public
+state, and carefully chosen representations of the hidden witness.
+
+\bigskip
+\hrule
+\bigskip
+
+\begin{thebibliography}{9}
+
+\bibitem{Chaum82}
+  D.~Chaum,
+  ``Blind signatures for untraceable payments,''
+  \emph{CRYPTO}, 1982.
+
+\bibitem{ST99}
+  T.~Sander and A.~Ta-Shma,
+  ``Auditable, anonymous electronic cash,''
+  \emph{CRYPTO}, 1999.
+
+\bibitem{Zerocash14}
+  E.~Ben-Sasson, A.~Chiesa, C.~Garman, M.~Green, I.~Miers, E.~Tromer,
+  and M.~Virza,
+  ``Zerocash: decentralized anonymous payments from Bitcoin,''
+  \emph{IEEE Symposium on Security and Privacy}, 2014.
+
+\end{thebibliography}
+
+\end{document}
